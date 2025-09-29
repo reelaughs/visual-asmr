@@ -1,0 +1,313 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Visual ASMR — synth-only</title>
+  <style>
+    :root { --panel-bg:#11161d; --panel-border:#1e2630; --panel-fg:#e6e9ef; --input-bg:#0f141a; --input-border:#273141; }
+    body{margin:0;font-family:system-ui,Inter,Arial;background:#0b0e12;color:#e6e9ef}
+    .panel{position:fixed;top:12px;left:12px;z-index:10;background:var(--panel-bg);border:1px solid var(--panel-border);
+      border-radius:12px;padding:12px 14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    label{font-size:12px;opacity:.9;margin-right:6px}
+    select,input,button{background:var(--input-bg);color:#e6e9ef;border:1px solid var(--input-border);border-radius:8px;padding:6px 8px}
+    button{cursor:pointer}
+    canvas{display:block}
+    .group{display:flex;align-items:center;gap:6px}
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <div class="group"><label>Layout</label>
+      <select id="layout"><option>float</option><option>static</option></select>
+    </div>
+    <div class="group"><label>Pattern</label>
+      <select id="pattern"><option>waves</option><option>circles</option><option>spiral</option><option>flower</option><option>smiley</option></select>
+    </div>
+    <div class="group"><label>Audio vibe</label>
+      <select id="feeling"><option>calm (piano)</option><option>focus</option><option>warm</option><option>energized</option></select>
+    </div>
+    <div class="group"><label>Visual Mood</label>
+      <select id="visualMood"><option>pastel (calm)</option><option>monochrome (focus 1)</option><option>cool (focus 2)</option><option>warm</option></select>
+    </div>
+    <div class="group"><label>Count</label><input id="count" type="number" min="1" max="24" value="6" style="width:70px"></div>
+    <div class="group"><label>Min size</label><input id="minSize" type="range" min="6" max="120" step="1" value="24"></div>
+    <div class="group"><label>Max size</label><input id="maxSize" type="range" min="12" max="240" step="1" value="140"></div>
+    <div class="group"><label>Speed</label><input id="speed" type="range" min="0" max="1" step="0.01" value="0.35"></div>
+    <div class="group"><label>Intensity</label><input id="intensity" type="range" min="0" max="1" step="0.01" value="0.6"></div>
+    <div class="group"><label>Theme</label><select id="theme"><option>dark</option><option>light</option></select></div>
+    <button id="audioBtn">Start sound</button>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
+  <script>
+    // ---------- UI helpers ----------
+    const el = id => document.getElementById(id);
+    const layoutSel    = () => el('layout').value;
+    const patternSel   = () => el('pattern').value;
+    const feelingSel   = () => el('feeling').value;
+    const visualMoodSel= () => el('visualMood').value;
+    const countVal     = () => +el('count').value;
+    const minSizeVal   = () => +el('minSize').value;
+    const maxSizeVal   = () => +el('maxSize').value;
+    const speedVal     = () => +el('speed').value;
+    const intensityVal = () => +el('intensity').value;
+    const themeSel     = () => el('theme').value;
+
+    // ---------- AUDIO (synth-only, live switching) ----------
+    let playing=false, transportStarted=false, nodes=[], loopers=[], pianoSampler=null;
+
+    function disposeAudioGraph(){
+      loopers.forEach(l=>l.dispose?.()); loopers=[];
+      nodes.forEach(n=>n.dispose?.()); nodes=[];
+    }
+
+    async function ensurePiano(){
+      if (pianoSampler) return pianoSampler;
+      pianoSampler = new Tone.Sampler({
+        urls:{ "C4":"C4.mp3","D4":"D4.mp3","E4":"E4.mp3","G4":"G4.mp3","A4":"A4.mp3","C5":"C5.mp3","E5":"E5.mp3","G5":"G5.mp3" },
+        baseUrl:"https://tonejs.github.io/audio/salamander/"
+      }).toDestination();
+      await pianoSampler.loaded;
+      return pianoSampler;
+    }
+
+    async function buildAudioGraph(){
+      disposeAudioGraph();
+
+      const reverb=new Tone.Reverb({decay:5,wet:0.22}).toDestination();
+      const ping  =new Tone.PingPongDelay({delayTime:0.22,feedback:0.25,wet:0.12}).toDestination();
+      nodes.push(reverb,ping);
+
+      const f = feelingSel();
+      let tempo=80;
+
+      if (f.startsWith("calm")){ // minimalist piano, shorter gaps
+        tempo = 88;
+        const piano = await ensurePiano();
+        const seqA = ["C4","E4","G4","A4","D4","E4"];
+        const seqB = ["C5","G4","E4","D4"];
+
+        const loopA = new Tone.Loop((time)=>{
+          const n = seqA[(Math.random()*seqA.length)|0];
+          piano.triggerAttackRelease(n, "4n", time, 0.7);
+        }, "2n").start(0);
+
+        const loopB = new Tone.Loop((time)=>{
+          const n = seqB[(Math.random()*seqB.length)|0];
+          piano.triggerAttackRelease(n, "8n", time+0.2, 0.45);
+        }, "4n").start(0.5);
+
+        loopers.push(loopA, loopB);
+
+      } else if (f==="focus"){
+        tempo=96;
+        const pluck=new Tone.PluckSynth().connect(ping); nodes.push(pluck);
+        const seq=["D4","F4","A4","C5","E5"];
+        const loop=new Tone.Loop((time)=>{
+          const n=seq[(Math.random()*seq.length)|0];
+          pluck.triggerAttack(n,time,0.7);
+          pluck.triggerAttack(Tone.Frequency(n).transpose(7), time+0.25, 0.45);
+        }, "4n").start(0);
+        loopers.push(loop);
+
+      } else if (f==="warm"){
+        tempo=80;
+        const am=new Tone.AMSynth({oscillator:{type:"sine"},modulation:{type:"triangle"}}).connect(reverb);
+        const chorus=new Tone.Chorus(3,1.5,0.25).start().connect(reverb);
+        am.connect(chorus); nodes.push(am,chorus);
+        const seq=["A3","C4","E4","G4","B4"];
+        const loop=new Tone.Loop((time)=>{
+          const n=seq[(Math.random()*seq.length)|0];
+          am.triggerAttackRelease(n,"4n",time,0.5);
+        }, "2n").start(0);
+        loopers.push(loop);
+
+      } else { // energized
+        tempo=116;
+        const fm=new Tone.FMSynth({modulationIndex:6,envelope:{attack:0.01,decay:0.2,sustain:0.2,release:0.35},modulation:{type:"square"}}).connect(ping);
+        nodes.push(fm);
+        const seq=["E4","G#4","B4","D5","F#5"];
+        const loop=new Tone.Loop((time)=>{
+          const n=seq[(Math.random()*seq.length)|0];
+          fm.triggerAttackRelease(n,"8n",time,0.7);
+          fm.triggerAttackRelease(Tone.Frequency(n).transpose(12),"16n",time+0.125,0.45);
+        }, "4n").start(0);
+        loopers.push(loop);
+      }
+
+      Tone.Transport.bpm.value=tempo;
+    }
+
+    async function startAudio(){
+      if (!playing){
+        await Tone.start();
+        await buildAudioGraph();
+        if (!transportStarted){ Tone.Transport.start(); transportStarted=true; }
+        playing=true; el('audioBtn').textContent="Stop sound";
+      }
+    }
+    async function softRebuild(){
+      if (!playing) return;
+      await buildAudioGraph();
+      if (!transportStarted){ Tone.Transport.start(); transportStarted=true; }
+    }
+    function stopAudio(){
+      if (playing){
+        Tone.Transport.stop(); transportStarted=false;
+        disposeAudioGraph(); playing=false; el('audioBtn').textContent="Start sound";
+      }
+    }
+    el('feeling').addEventListener('change', softRebuild);
+    el('audioBtn').addEventListener('click', ()=> playing? stopAudio() : startAudio());
+
+    // ---------- VISUALS ----------
+    let t = 0;
+    let agents = [];
+
+    function strokeFromMood(){
+      const vm=visualMoodSel(), th=themeSel();
+      if (vm.includes("monochrome")) return (th==="dark")? color(240,210) : color(30,220);
+      if (vm.includes("cool"))       return color(120+80*sin(t),160+40*cos(t),255,210);
+      if (vm.includes("warm"))       return color(255,140+40*sin(t),100+30*cos(t*0.5),210);
+      return color(200+20*sin(t),180+20*cos(t*0.5),220,200); // pastel
+    }
+
+    function drawSmiley(cx,cy,r,strokeCol){
+      push(); stroke(strokeCol); noFill();
+      ellipse(cx,cy, r*2, r*2);
+      const eyeR=Math.max(1, r*0.06), offX=r*0.35, offY=-r*0.2;
+      strokeWeight(eyeR);
+      const eyeCol=color(red(strokeCol),green(strokeCol),blue(strokeCol),180);
+      stroke(eyeCol); point(cx-offX,cy+offY); point(cx+offX,cy+offY);
+      stroke(strokeCol); strokeWeight(1.6);
+      const start=0.15*PI,end=0.85*PI; arc(cx, cy+r*0.15, r*1.2, r*0.9, start, end);
+      pop();
+    }
+
+    function rebuildAgents(){
+      const n=countVal(); agents=[];
+      for (let i=0;i<n;i++){
+        agents.push({ p:createVector(random(width),random(height)),
+                      v:p5.Vector.random2D().mult(random(0.3,1.5)),
+                      sz:random(minSizeVal(), Math.max(minSizeVal()+6, maxSizeVal())),
+                      seed:random(1000) });
+      }
+    }
+
+    function drawStatic(pattern, strokeCol){
+      stroke(strokeCol); strokeWeight(1.6);
+      const cx=width/2, cy=height/2;
+
+      if (pattern==='waves'){
+        resetMatrix(); translate(0, height*0.5);
+        for (let y=0;y<height;y+=12){
+          beginShape();
+          for (let x=0;x<width;x+=14){
+            const yOff=40*Math.sin((x*0.01)+t*2+y*0.02)*intensityVal();
+            vertex(x, yOff + y*0.18);
+          }
+          endShape();
+        }
+        return;
+      }
+
+      if (pattern==='circles'){
+        const base = Math.min(width, height)*0.95;
+        const pul  = Math.sin(t*2)*0.04*base*intensityVal();
+        ellipse(cx, cy, base+pul, base+pul);
+        return;
+      }
+
+      const I = countVal();
+      for (let k=0;k<I;k++){
+        const r = map(k, 0, Math.max(1,I-1), minSizeVal(), maxSizeVal());
+        if (pattern==='spiral'){
+          beginShape();
+          for (let a=0;a< Math.PI*6; a+=0.05){
+            const rr=2 + a*(0.12*r)*intensityVal();
+            vertex(cx + rr*Math.cos(a+t), cy + rr*Math.sin(a+t));
+          }
+          endShape();
+        } else if (pattern==='flower'){
+          const petals=5;
+          beginShape();
+          for (let a=0;a<TWO_PI; a+=0.01){
+            const rr=(0.7*r)*Math.cos(petals*a + t)*(0.5 + intensityVal());
+            vertex(cx + rr*Math.cos(a), cy + rr*Math.sin(a));
+          }
+          endShape(CLOSE);
+        } else if (pattern==='smiley'){
+          drawSmiley(cx, cy, r, strokeCol);
+        }
+      }
+    }
+
+    function drawPatternAt(pat,cx,cy,r,k,strokeCol){
+      stroke(strokeCol);
+      if (pat==='circles'){
+        const pul=Math.sin(t*2+k)*12*intensityVal();
+        ellipse(cx,cy,(r+pul)*2,(r+pul)*2);
+      } else if (pat==='spiral'){
+        beginShape();
+        for (let a=0;a< Math.PI*6; a+=0.05){
+          const rr=2 + a*(0.12*r)*intensityVal();
+          vertex(cx + rr*Math.cos(a+t+k), cy + rr*Math.sin(a+t+k));
+        }
+        endShape();
+      } else if (pat==='flower'){
+        const petals=5;
+        beginShape();
+        for (let a=0;a<TWO_PI; a+=0.01){
+          const rr=(0.7*r)*Math.cos(petals*a + t + k)*(0.5 + intensityVal());
+          vertex(cx + rr*Math.cos(a), cy + rr*Math.sin(a));
+        }
+        endShape();
+      } else if (pat==='smiley'){
+        drawSmiley(cx, cy, r, strokeCol);
+      } else if (pat==='waves'){
+        beginShape();
+        const W=r*2.2;
+        for (let x=-W;x<=W;x+=8){
+          const yOff=12*Math.sin((x*0.1)+t*2+k)*intensityVal();
+          vertex(cx + x, cy + yOff);
+        }
+        endShape();
+      }
+    }
+
+    // p5 hooks
+    let tFrame = 0;
+    function setup(){ createCanvas(window.innerWidth,window.innerHeight); noFill(); rebuildAgents(); }
+    function windowResized(){ resizeCanvas(window.innerWidth,window.innerHeight); rebuildAgents(); }
+    function draw(){
+      if (themeSel()==="dark") background(11,14,18,28); else background(245,245,245,28);
+      const strokeCol = strokeFromMood(); stroke(strokeCol); noFill(); strokeWeight(1.6);
+
+      t += 0.004 + speedVal()*0.02;
+      const pat=patternSel(), lay=layoutSel();
+
+      if (lay==='float'){
+        for (let i=0;i<agents.length;i++){
+          const a=agents[i];
+          const ang=noise(a.seed, a.p.x*0.001, a.p.y*0.001, t)*TWO_PI*2;
+          const drift=p5.Vector.fromAngle(ang).mult(0.3 + speedVal()*1.2);
+          a.v.add(drift.mult(0.02)); a.v.limit(2.5); a.p.add(a.v);
+          if (a.p.x<-40) a.p.x=width+40; if (a.p.x>width+40) a.p.x=-40;
+          if (a.p.y<-40) a.p.y=height+40; if (a.p.y>height+40) a.p.y=-40;
+          drawPatternAt(pat, a.p.x, a.p.y, a.sz, i, strokeCol);
+        }
+      } else {
+        drawStatic(pat, strokeCol);
+      }
+    }
+
+    // rebuild agents when these change (only matters in float mode)
+    ["count","minSize","maxSize","layout"].forEach(id=>{
+      el(id).addEventListener('input', ()=>{ if (layoutSel()==='float') rebuildAgents(); });
+      el(id).addEventListener('change', ()=>{ if (layoutSel()==='float') rebuildAgents(); });
+    });
+  </script>
+</body>
+</html>
